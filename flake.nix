@@ -11,7 +11,9 @@
         pkgs = import nixpkgs { inherit system; };
         texlive = pkgs.texlive.combined.scheme-full;
         set-environment = pkgs.writeShellScript ".sh" ''
-          PROJECTPATH=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
+          if [[ -z "$PROJECTPATH" ]]; then
+            PROJECTPATH=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
+          fi
           source ''${PROJECTPATH}/settings.env
         '';
       in
@@ -44,6 +46,28 @@
 
             popd
           '';
+
+          docker-image = pkgs.dockerTools.buildLayeredImage {
+            name = "latex-tools";
+            tag = "v1.0.0";
+            contents = [
+              texlive
+              pkgs.bash
+              pkgs.entr
+              self.packages.${system}.document-compiler
+              self.packages.${system}.file-watcher
+            ];
+            config = {
+              Cmd = [ "${self.packages.${system}.file-watcher}/bin/file-watcher" ];
+              WorkingDir = "/data";
+              Volumes = {
+                "/data" = {};
+              };
+              Env = [
+                "PROJECTPATH=/data"
+              ];
+            };
+          };
         };
         apps = {
           default = self.apps.${system}.document-compile;
@@ -64,7 +88,7 @@
                 ${pkgs.zathura}/bin/zathura ''${PROJECTPATH}/''${OUTDIR}/''${JOBNAME}.pdf &
                 zathura-pid=$!
 
-                trap "kill ''${file-watcher-pid} ''${zathura-pid}" SIGINT
+                trap "pkill -P $$" SIGINT
 
                 wait
 
