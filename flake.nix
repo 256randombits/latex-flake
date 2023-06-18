@@ -1,5 +1,5 @@
 {
-  description = "LaTeX bells and whistles";
+  description = "latex-tools";
   inputs =
     {
       nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -9,59 +9,77 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = import nixpkgs { inherit system; };
-        texlive = pkgs.texlive.combined.scheme-full;
-        set-environment = pkgs.writeShellScript ".sh" ''
-          if [[ -z "$PROJECTPATH" ]]; then
-            PROJECTPATH=$(${pkgs.git}/bin/git rev-parse --show-toplevel)
-          fi
-          source ''${PROJECTPATH}/settings.env
+        # texlive = pkgs.texlive.combined.scheme-full;
+        texlive = pkgs.texlive.combined.scheme-small;
+        docker = {
+          image = {
+            name = "latex-tools";
+            tag = "dev";
+          };
+        };
+        set-environment = pkgs.writeShellScript "set-env.sh" ''
+          export PROJECTPATH="''${PROJECTPATH:-$(${pkgs.git}/bin/git rev-parse --show-toplevel)}"
+
+          # shellcheck source=/dev/null
+          source "''${PROJECTPATH}"/settings.env
         '';
       in
       {
         packages = {
 
-          document-compiler = pkgs.writers.writeBashBin "document-compiler" ''
-            source ${set-environment}
+          document-compiler = pkgs.writeShellApplication {
+            name = "document-compiler";
+            runtimeInputs = [ texlive pkgs.coreutils ];
+            text = ''
+              # shellcheck source=/dev/null
+              source ${set-environment}
 
-            pushd ''${PROJECTPATH}
-            ${pkgs.coreutils}/bin/mkdir -p ''${OUTDIR}
-            popd
+              pushd "''${PROJECTPATH}"
+              mkdir -p "''${OUTDIR}"
+              popd
 
-            pushd ''${PROJECTPATH}/''${SRCDIR}
+              pushd "''${PROJECTPATH}"/"''${SRCDIR}"
 
-            ${texlive}/bin/pdflatex \
-              -output-directory=''${PROJECTPATH}/''${OUTDIR} \
-              -jobname=''${JOBNAME} \
-              ''${TEXFILE}
+              pdflatex \
+                -output-directory="''${PROJECTPATH}"/"''${OUTDIR}" \
+                -jobname="''${JOBNAME}" \
+                "''${TEXFILE}"
 
 
-            popd
-          '';
+              popd
+            '';
+          };
 
-          file-watcher = pkgs.writers.writeBashBin "file-watcher" ''
-            source ${set-environment}
-            pushd ''${PROJECTPATH}/''${SRCDIR}
+          file-watcher = pkgs.writeShellApplication {
+            name = "file-watcher";
+            runtimeInputs = [
+              self.packages.${system}.document-compiler
+              pkgs.findutils
+              pkgs.entr
+            ];
+            text = ''
+              # shellcheck source=/dev/null
+              source ${set-environment}
+              pushd "''${PROJECTPATH}"/"''${SRCDIR}"
 
-            ${pkgs.findutils}/bin/find . -name "*.tex" | entr ${self.packages.${system}.document-compiler}/bin/document-compiler
+              find . -name "*.tex" | entr document-compiler
 
-            popd
-          '';
+              popd
+            '';
+          };
 
           docker-image = pkgs.dockerTools.buildLayeredImage {
-            name = "latex-tools";
-            tag = "v1.0.0";
+            name = docker.image.name;
+            tag = docker.image.tag;
             contents = [
-              texlive
               pkgs.bash
-              pkgs.entr
-              self.packages.${system}.document-compiler
               self.packages.${system}.file-watcher
             ];
             config = {
-              Cmd = [ "${self.packages.${system}.file-watcher}/bin/file-watcher" ];
+              Cmd = [ "file-watcher" ];
               WorkingDir = "/data";
               Volumes = {
-                "/data" = {};
+                "/data" = { };
               };
               Env = [
                 "PROJECTPATH=/data"
