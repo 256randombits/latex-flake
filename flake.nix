@@ -92,26 +92,63 @@
           file-watch = flake-utils.lib.mkApp { drv = self.packages.${system}.file-watcher; };
           document-compile = flake-utils.lib.mkApp { drv = self.packages.${system}.document-compiler; };
           all = flake-utils.lib.mkApp {
-            drv = pkgs.writers.writeBashBin "document-all"
-              ''
+            drv = pkgs.writeShellApplication {
+              name = "document-all";
+              runtimeInputs = [
+                self.packages.${system}.document-compiler
+                self.packages.${system}.file-watcher
+                pkgs.zathura
+              ];
+              text = ''
+                # shellcheck source=/dev/null
                 source ${set-environment}
-                pushd ''${PROJECTPATH}
+                pushd "''${PROJECTPATH}"
 
                 #Run compiler once to make sure that the pdf exists.
-                ${self.packages.${system}.document-compiler}/bin/document-compiler
+                document-compiler
 
-                ${self.packages.${system}.file-watcher}/bin/file-watcher &
-                file-watcher-pid=$!
+                file-watcher &
+                # file_watcher_pid="$!"
 
-                ${pkgs.zathura}/bin/zathura ''${PROJECTPATH}/''${OUTDIR}/''${JOBNAME}.pdf &
-                zathura-pid=$!
+                zathura "''${PROJECTPATH}"/"''${OUTDIR}"/"''${JOBNAME}".pdf &
+                # zathura_pid=$!
 
-                trap "pkill -P $$" SIGINT
+                trap 'pkill -P $$' SIGINT
 
                 wait
 
                 popd
               '';
+            };
+          };
+          docker-import = flake-utils.lib.mkApp {
+            drv = pkgs.writeShellApplication {
+              name = "docker-import";
+              runtimeInputs = [
+                pkgs.which
+              ];
+              text = ''
+                if ! which "docker" > /dev/null 2>&1
+                then
+                  echo "Docker not found in PATH!"
+                  exit 1
+                fi
+
+                docker load < ${self.packages.${system}.docker-image}
+              '';
+            };
+          };
+          docker-run = flake-utils.lib.mkApp {
+            drv = pkgs.writeShellApplication {
+              name = "docker-run";
+              text = ''
+                # shellcheck source=/dev/null
+                source ${set-environment}
+
+                ${self.apps.${system}.docker-import.program}
+                docker run -it -v "''${PROJECTPATH}":/data ${docker.image.name}:${docker.image.tag}
+              '';
+            };
           };
         };
         devShells = {
