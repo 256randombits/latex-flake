@@ -11,6 +11,7 @@
         {
           apps = {
             file-watch = latex-flake.apps.${system}.file-watch;
+            all = latex-flake.apps.${system}.all;
           };
         });
 }
